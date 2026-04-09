@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>플로팅 홀로그램 광학 시뮬레이션</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; font-family: 'Pretendard', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        /* UI Overlays */
+        .ui-layer { position: absolute; z-index: 10; pointer-events: none; }
+        .pointer-events-auto { pointer-events: auto; }
+        
+        /* Glassmorphism Panels */
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease-in-out;
+        }
+
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; cursor: pointer; margin-top: -6px; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+        input[type=range]:focus { outline: none; }
+        
+        /* Toggle Switch */
+        .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; }
+        
+        /* 3D Text Labels */
+        .label { color: #fbbf24; font-weight: bold; font-size: 14px; background: rgba(0,0,0,0.7); padding: 2px 6px; border-radius: 4px; pointer-events: none; border: 1px solid rgba(251, 191, 36, 0.5); text-shadow: 1px 1px 2px black; }
+        .label.blue { color: #60a5fa; border-color: rgba(96, 165, 250, 0.5); }
+        .label.red { color: #f87171; border-color: rgba(248, 113, 113, 0.5); }
+        
+        /* Observer View PIP */
+        #observer-view-container { box-shadow: inset 0 0 10px rgba(0,0,0,0.8); }
+    </style>
+    
+    <!-- Three.js and CSS2DRenderer via Import Maps -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- Top Center: Mission Banner -->
+    <div class="ui-layer top-4 left-1/2 transform -translate-x-1/2 w-full max-w-2xl px-4 text-center">
+        <div class="glass-panel py-3 px-6 inline-block pointer-events-auto border-yellow-500/50 border-2">
+            <h1 class="text-xl font-bold text-yellow-400 mb-1">🎯 미션: 홀로그램을 찾아라!</h1>
+            <p class="text-sm text-gray-200">주변 빛을 조절하고 <b class="text-white">관찰자의 눈높이</b>를 맞춰 진짜 캐릭터를 선명하게 찾아보세요!</p>
+        </div>
+    </div>
+
+    <!-- Left Panel: Minimap & Observer View -->
+    <div id="left-panel-wrapper" class="ui-layer top-4 left-4 flex pointer-events-auto transition-transform duration-300">
+        <div class="w-48 flex flex-col gap-4">
+            <!-- Minimap -->
+            <div class="glass-panel p-3">
+                <h2 class="text-sm font-semibold mb-2 text-gray-300">📱 스마트폰 바닥 화면</h2>
+                <div class="relative w-full aspect-square bg-black rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center">
+                    <canvas id="minimap-canvas" width="128" height="128" class="w-full h-full"></canvas>
+                </div>
+            </div>
+            
+            <!-- Observer's View (PIP) -->
+            <div class="glass-panel p-3">
+                <h2 class="text-sm font-semibold mb-2 text-blue-300 flex items-center gap-1">👁️ 관찰자 시점 뷰</h2>
+                <div id="observer-view-container" class="relative w-full aspect-square bg-gray-900 rounded-lg border-2 border-blue-500/50 overflow-hidden">
+                    <canvas id="pip-canvas" width="256" height="256" class="w-full h-full block"></canvas>
+                </div>
+                <p class="text-xs text-gray-400 mt-2 text-center">관찰자의 눈에 보이는 모습</p>
+            </div>
+        </div>
+        
+        <!-- Left Panel Toggle -->
+        <button id="btn-toggle-left" class="ml-2 mt-2 bg-slate-800/80 hover:bg-slate-700 text-white p-2 h-10 rounded-r-lg border border-l-0 border-slate-600 backdrop-blur">
+            ◀
+        </button>
+    </div>
+
+    <!-- Right Panel: Controls -->
+    <div id="right-panel-wrapper" class="ui-layer top-4 right-4 flex pointer-events-auto transition-transform duration-300 transform">
+        <!-- Right Panel Toggle -->
+        <button id="btn-toggle-right" class="mr-2 mt-2 bg-slate-800/80 hover:bg-slate-700 text-white p-2 h-10 rounded-l-lg border border-r-0 border-slate-600 backdrop-blur">
+            ▶
+        </button>
+
+        <div class="w-80 flex flex-col gap-4 max-h-[90vh] overflow-y-auto pb-4 custom-scrollbar">
+            
+            <!-- Observer Controls -->
+            <div class="glass-panel p-5">
+                <h2 class="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2">
+                    <span>👁️</span> 관찰자 시야 조절
+                </h2>
+                
+                <div class="mb-4">
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm text-gray-300">수직 눈높이 (높낮이)</label>
+                        <span id="val-vangle" class="text-sm text-blue-300 font-mono">0°</span>
+                    </div>
+                    <input type="range" id="slider-vangle" min="-30" max="80" value="0" step="1">
+                </div>
+
+                <div class="mb-4">
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm text-gray-300">수평 회전 (방향)</label>
+                        <span id="val-hangle" class="text-sm text-blue-300 font-mono">0°</span>
+                    </div>
+                    <input type="range" id="slider-hangle" min="0" max="360" value="0" step="1">
+                </div>
+
+                <!-- Fix Angle Button -->
+                <button id="btn-fix-angle" class="mt-2 w-full bg-blue-600/50 hover:bg-blue-500/80 text-white border border-blue-400 text-sm font-bold py-2 px-4 rounded transition-all">
+                    🎯 각도 자동 맞추기
+                </button>
+            </div>
+
+            <!-- Options & Physics -->
+            <div class="glass-panel p-5">
+                <h2 class="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2">
+                    <span>⚙️</span> 장치 및 홀로그램 설정
+                </h2>
+                
+                <div class="mb-5 border-b border-gray-600 pb-5">
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm text-gray-300 font-bold text-pink-300">투명 필름 각도 (바닥 기준)</label>
+                        <span id="val-filmangle" class="text-sm text-pink-300 font-mono">45°</span>
+                    </div>
+                    <input type="range" id="slider-filmangle" min="30" max="60" value="45" step="1">
+                </div>
+
+                <div class="mb-4">
+                    <label class="text-sm text-gray-300 block mb-2">캐릭터 사진 선택</label>
+                    <select id="select-character" class="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none">
+                        <option value="pikachu">⚡ 피카츄</option>
+                        <option value="charmander">🔥 파이리</option>
+                        <option value="squirtle">💧 꼬부기</option>
+                        <option value="bulbasaur">🍃 이상해씨</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm text-gray-300">빛의 경로 및 반사각 보기</span>
+                    <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" name="toggle" id="toggle-rays" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-transform duration-200 ease-in-out"/>
+                        <label for="toggle-rays" class="toggle-label block overflow-hidden h-5 rounded-full bg-gray-600 cursor-pointer transition-colors duration-200 ease-in-out"></label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Environment Controls -->
+            <div class="glass-panel p-5">
+                <h2 class="text-lg font-bold text-yellow-400 mb-4 flex items-center gap-2">
+                    <span>💡</span> 환경 & 빛 조절
+                </h2>
+                
+                <div class="mb-4">
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm text-gray-300">방 밝기 (주변 조명)</label>
+                        <span id="val-roomlight" class="text-sm text-yellow-300 font-mono">20%</span>
+                    </div>
+                    <input type="range" id="slider-roomlight" min="0" max="100" value="20" step="1">
+                </div>
+
+                <div class="mb-4">
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm text-gray-300">스마트폰 화면 밝기</label>
+                        <span id="val-screenlight" class="text-sm text-yellow-300 font-mono">90%</span>
+                    </div>
+                    <input type="range" id="slider-screenlight" min="0" max="100" value="90" step="1">
+                </div>
+
+                <button id="btn-reset" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2 px-4 rounded shadow-lg transition-all active:scale-95">
+                    ✨ 45° 완벽한 세팅으로 초기화
+                </button>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- App Logic -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+        // --- Application State ---
+        const state = {
+            vAngle: 0, 
+            hAngle: 0, 
+            roomLight: 20, 
+            screenLight: 90, 
+            filmAngle: 45, 
+            character: 'pikachu',
+            showRays: false,
+            eyeRadius: 15, 
+            hologramCenter: new THREE.Vector3(0, 2.0, 0),
+            optimalAngle: 0, 
+            z_src: 3.5,
+            isLeftPanelOpen: true,
+            isRightPanelOpen: true
+        };
+
+        // --- Real Character Images (PokeAPI via reliable jsDelivr CDN) ---
+        const charData = {
+            pikachu: 'https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/other/official-artwork/25.png',
+            charmander: 'https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/other/official-artwork/4.png',
+            squirtle: 'https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/other/official-artwork/7.png',
+            bulbasaur: 'https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/other/official-artwork/1.png'
+        };
+
+        const loadedImages = {};
+        const loadedTextures = {};
+
+        // 이미지를 한 번만 로드하여 2D 캔버스와 3D 텍스처에 모두 안전하게 공유합니다.
+        for (const [key, url] of Object.entries(charData)) {
+            const img = new Image();
+            img.crossOrigin = 'anonymous'; // CORS 에러 방지
+            
+            img.onload = () => {
+                // 3D 공간을 위한 텍스처 생성
+                const texture = new THREE.Texture(img);
+                texture.colorSpace = THREE.SRGBColorSpace; // 색상 보정
+                texture.needsUpdate = true;
+                loadedTextures[key] = texture;
+                
+                // 현재 선택된 캐릭터가 로딩 완료되면 화면 즉시 업데이트
+                if (state.character === key) {
+                    updateMinimap(); 
+                }
+            };
+            img.onerror = () => console.error('포켓몬 이미지를 불러오는 데 실패했습니다:', url);
+            img.src = url;
+            loadedImages[key] = img;
+        }
+
+        // --- DOM Elements ---
+        const elSliderVAngle = document.getElementById('slider-vangle');
+        const elSliderHAngle = document.getElementById('slider-hangle');
+        const elSliderRoomLight = document.getElementById('slider-roomlight');
+        const elSliderScreenLight = document.getElementById('slider-screenlight');
+        const elSliderFilmAngle = document.getElementById('slider-filmangle');
+        const elSelectChar = document.getElementById('select-character');
+        const elToggleRays = document.getElementById('toggle-rays');
+        const elBtnReset = document.getElementById('btn-reset');
+        const elBtnFixAngle = document.getElementById('btn-fix-angle');
+        
+        const minimapCtx = document.getElementById('minimap-canvas').getContext('2d');
+        const pipCanvas = document.getElementById('pip-canvas');
+        const pipCtx = pipCanvas.getContext('2d');
+
+        // Panel Toggles
+        const leftPanel = document.getElementById('left-panel-wrapper');
+        const rightPanel = document.getElementById('right-panel-wrapper');
+        const btnToggleLeft = document.getElementById('btn-toggle-left');
+        const btnToggleRight = document.getElementById('btn-toggle-right');
+
+        btnToggleLeft.addEventListener('click', () => {
+            state.isLeftPanelOpen = !state.isLeftPanelOpen;
+            if(state.isLeftPanelOpen) {
+                leftPanel.style.transform = 'translateX(0)';
+                btnToggleLeft.innerText = '◀';
+            } else {
+                leftPanel.style.transform = 'translateX(calc(-100% + 40px))';
+                btnToggleLeft.innerText = '▶';
+            }
+        });
+
+        btnToggleRight.addEventListener('click', () => {
+            state.isRightPanelOpen = !state.isRightPanelOpen;
+            if(state.isRightPanelOpen) {
+                rightPanel.style.transform = 'translateX(0)';
+                btnToggleRight.innerText = '▶';
+            } else {
+                rightPanel.style.transform = 'translateX(calc(100% - 40px))';
+                btnToggleRight.innerText = '◀';
+            }
+        });
+
+        // --- Three.js Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+
+        // Main Camera
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(15, 10, 20);
+
+        // Observer Camera (PIP)
+        const observerCamera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+
+        // 1. 단일 렌더러로 최적화! (안정성 보장)
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0px';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        container.appendChild(labelRenderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 2, 0);
+        controls.maxDistance = 40;
+        controls.minDistance = 5;
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        
+        const pointLight = new THREE.PointLight(0xffffff, 1);
+        pointLight.position.set(0, 10, 0);
+        scene.add(pointLight);
+
+        // --- 3D Objects Construction ---
+
+        // 1. Smartphone (Base) - 크기를 키워 이미지가 잘리지 않게 조정 (12x12)
+        const phoneGeo = new THREE.BoxGeometry(12, 0.4, 16);
+        const phoneMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 });
+        const phone = new THREE.Mesh(phoneGeo, phoneMat);
+        phone.position.y = -0.2;
+        scene.add(phone);
+
+        // Floor Canvas (Texture for the smartphone screen)
+        const floorCanvas = document.createElement('canvas');
+        floorCanvas.width = 1024; 
+        floorCanvas.height = 1024;
+        const floorCtx = floorCanvas.getContext('2d');
+        const floorTexture = new THREE.CanvasTexture(floorCanvas);
+        floorTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+        const screenGeo = new THREE.PlaneGeometry(12, 12);
+        const screenMat = new THREE.MeshBasicMaterial({ map: floorTexture });
+        const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+        screenMesh.rotation.x = -Math.PI / 2;
+        screenMesh.position.y = 0.01;
+        scene.add(screenMesh);
+
+        // 2. Pyramid (Dynamic generation)
+        const pyramidMat = new THREE.MeshPhysicalMaterial({
+            color: 0xffffff, metalness: 0.1, roughness: 0,
+            transmission: 0.9, thickness: 0.1, transparent: true, opacity: 1,
+            side: THREE.DoubleSide
+        });
+        const pyramid = new THREE.Mesh(new THREE.BufferGeometry(), pyramidMat);
+        pyramid.rotation.y = Math.PI / 4; 
+        scene.add(pyramid);
+        
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.5 });
+        const pyramidLines = new THREE.LineSegments(new THREE.BufferGeometry(), lineMat);
+        pyramid.add(pyramidLines);
+
+        function updatePyramidGeometry() {
+            const angleRad = THREE.MathUtils.degToRad(state.filmAngle);
+            const pHeight = 5; 
+            const pBottomRadius = 1.5;
+            const pTopRadius = pBottomRadius + pHeight / Math.tan(angleRad);
+            
+            if(pyramid.geometry) pyramid.geometry.dispose();
+            pyramid.geometry = new THREE.CylinderGeometry(pTopRadius, pBottomRadius, pHeight, 4, 1, true);
+            pyramid.position.y = pHeight / 2;
+            
+            if(pyramidLines.geometry) pyramidLines.geometry.dispose();
+            pyramidLines.geometry = new THREE.EdgesGeometry(pyramid.geometry);
+            
+            state.z_src = (2.0 + pBottomRadius * Math.tan(angleRad)) * Math.sin(2 * angleRad);
+            
+            updateMinimap();
+        }
+
+        // 3. Hologram Characters (안정적인 4방향 독립 패널)
+        const hologramGroup = new THREE.Group();
+        hologramGroup.position.copy(state.hologramCenter);
+        scene.add(hologramGroup);
+
+        // 정면만 보이게 하는 재질 (FrontSide) - 입체감을 살림
+        const holoMatFront = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.FrontSide });
+        const holoMatRight = holoMatFront.clone();
+        const holoMatBack = holoMatFront.clone();
+        const holoMatLeft = holoMatFront.clone();
+        const holoMaterials = [holoMatFront, holoMatRight, holoMatBack, holoMatLeft];
+
+        const holoGeo = new THREE.PlaneGeometry(3.5, 3.5);
+        
+        const holoPlaneFront = new THREE.Mesh(holoGeo, holoMatFront); holoPlaneFront.rotation.y = 0; // +Z
+        const holoPlaneRight = new THREE.Mesh(holoGeo, holoMatRight); holoPlaneRight.rotation.y = Math.PI / 2; // +X
+        const holoPlaneBack = new THREE.Mesh(holoGeo, holoMatBack); holoPlaneBack.rotation.y = Math.PI; // -Z
+        const holoPlaneLeft = new THREE.Mesh(holoGeo, holoMatLeft); holoPlaneLeft.rotation.y = -Math.PI / 2; // -X
+        
+        hologramGroup.add(holoPlaneFront, holoPlaneRight, holoPlaneBack, holoPlaneLeft);
+
+        // 4. Observer Eye Icon
+        const eyeGroup = new THREE.Group();
+        scene.add(eyeGroup);
+        
+        eyeGroup.add(observerCamera);
+
+        const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.0, 32, 32), new THREE.MeshBasicMaterial({color: 0xffffff}));
+        const iris = new THREE.Mesh(new THREE.SphereGeometry(0.65, 32, 32), new THREE.MeshBasicMaterial({color: 0x0ea5e9}));
+        iris.position.z = 0.6; iris.scale.z = 0.2;
+        const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.4, 32, 32), new THREE.MeshBasicMaterial({color: 0x0f172a}));
+        pupil.position.z = 0.75; pupil.scale.z = 0.1;
+        
+        const sparkle1 = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), new THREE.MeshBasicMaterial({color: 0xffffff}));
+        sparkle1.position.set(0.15, 0.2, 0.8); sparkle1.scale.z = 0.1;
+        const sparkle2 = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 16), new THREE.MeshBasicMaterial({color: 0xffffff}));
+        sparkle2.position.set(-0.15, -0.15, 0.8); sparkle2.scale.z = 0.1;
+        
+        const fovGeo = new THREE.EdgesGeometry(new THREE.ConeGeometry(6, 30, 4));
+        fovGeo.rotateX(-Math.PI / 2); fovGeo.translate(0, 0, -15);
+        const fovLines = new THREE.LineSegments(fovGeo, new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.2 }));
+
+        const eyeParts = [sclera, iris, pupil, sparkle1, sparkle2, fovLines];
+        eyeParts.forEach(part => {
+            part.layers.set(1);
+            eyeGroup.add(part);
+        });
+        
+        camera.layers.enable(1);
+        observerCamera.layers.set(0);
+
+        // 5. Ray Tracing Visuals
+        const rayGroup = new THREE.Group();
+        scene.add(rayGroup);
+        rayGroup.visible = false;
+
+        const actualRay = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xfbbf24, linewidth: 2 }));
+        const virtualRay = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0x60a5fa, linewidth: 2, dashSize: 0.3, gapSize: 0.2 }));
+        rayGroup.add(actualRay, virtualRay);
+
+        function createLabel(text, colorClass) {
+            const div = document.createElement('div');
+            div.className = `label ${colorClass}`;
+            div.innerHTML = text;
+            return new CSS2DObject(div);
+        }
+
+        const angleLabel = createLabel('반사각', ''); rayGroup.add(angleLabel);
+        const realLightLabel = createLabel('실제 빛', ''); rayGroup.add(realLightLabel);
+        const virtualLightLabel = createLabel('뇌의 착각 (직진)', 'blue'); rayGroup.add(virtualLightLabel);
+        
+        const eyeTextLabel = createLabel('👁️ 관찰자의 눈', '');
+        eyeTextLabel.position.y = 1.6;
+        eyeTextLabel.layers.set(1); 
+        eyeGroup.add(eyeTextLabel);
+
+        // Initial setup
+        updatePyramidGeometry();
+
+        // --- Application Logic ---
+
+        function drawShapesOnCanvas(ctx, size, isMinimap) {
+            const cx = size / 2;
+            const cy = size / 2;
+            // 바닥 스크린 사이즈 12를 기준으로 캔버스 좌표 맵핑
+            const r = isMinimap ? 35 : state.z_src * (size / 12); 
+            
+            ctx.fillStyle = '#050505'; 
+            ctx.fillRect(0, 0, size, size);
+
+            const img = loadedImages[state.character];
+            // 이미지가 완벽히 로드되었는지 검증
+            const hasImg = img && img.complete && img.naturalWidth > 0;
+
+            const drawShape = (x, y, angle) => {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(angle);
+                
+                const imgSize = isMinimap ? 40 : (size / 12) * 3.5; 
+                
+                // 이모지 대체 코드를 완전히 삭제하고 이미지만 그리도록 설정
+                if (hasImg) {
+                    ctx.drawImage(img, -imgSize/2, -imgSize/2, imgSize, imgSize);
+                }
+                
+                ctx.restore();
+            };
+
+            drawShape(cx, cy + r, Math.PI); // Front
+            drawShape(cx + r, cy, -Math.PI/2); // Right
+            drawShape(cx, cy - r, 0); // Back
+            drawShape(cx - r, cy, Math.PI/2); // Left
+        }
+
+        function updateMinimap() {
+            // 바닥 및 미니맵 업데이트
+            drawShapesOnCanvas(minimapCtx, 128, true);
+            drawShapesOnCanvas(floorCtx, 1024, false);
+            floorTexture.needsUpdate = true;
+            
+            // 홀로그램 3D 패널에 진짜 사진 텍스처 맵핑
+            if (loadedTextures[state.character]) {
+                holoMaterials.forEach(mat => {
+                    mat.map = loadedTextures[state.character];
+                    mat.needsUpdate = true;
+                });
+            }
+        }
+
+        function updatePhysics() {
+            // 1. Calculate Eye Position
+            const hRad = THREE.MathUtils.degToRad(state.hAngle);
+            const vRad = THREE.MathUtils.degToRad(state.vAngle);
+            
+            eyeGroup.position.set(
+                state.eyeRadius * Math.cos(vRad) * Math.sin(hRad),
+                state.hologramCenter.y + state.eyeRadius * Math.sin(vRad),
+                state.eyeRadius * Math.cos(vRad) * Math.cos(hRad)
+            );
+            eyeGroup.lookAt(state.hologramCenter);
+
+            // 2. Physics & Optimal Angle calculation based on Film Angle
+            const angleRad = THREE.MathUtils.degToRad(state.filmAngle);
+            
+            const V_ref_y = -Math.cos(2 * angleRad);
+            const V_ref_z = Math.sin(2 * angleRad);
+            state.optimalAngle = Math.atan2(V_ref_y, Math.abs(V_ref_z)) * 180 / Math.PI;
+            
+            const hMod = state.hAngle % 90;
+            const hDeviation = Math.min(hMod, 90 - hMod);
+            const vDeviation = Math.abs(state.vAngle - state.optimalAngle); 
+            
+            const envFactor = (state.screenLight / 100) * (1 - (state.roomLight / 100) * 0.9);
+            const hFactor = Math.max(0, 1 - (hDeviation / 40)); 
+            const vFactor = Math.max(0, 1 - (vDeviation / 30)); 
+
+            let finalOpacity = envFactor * hFactor * vFactor;
+            
+            // 4방향 홀로그램 재질 투명도 일괄 업데이트
+            holoMaterials.forEach(mat => mat.opacity = finalOpacity);
+            
+            const lightVal = state.screenLight / 100;
+            screenMat.color.setRGB(lightVal, lightVal, lightVal);
+            ambientLight.intensity = (state.roomLight / 100) * 2;
+
+            // 3. Update Ray Tracing paths
+            if(state.showRays) {
+                let faceIndex = Math.round(state.hAngle / 90) % 4; 
+                if (faceIndex < 0) faceIndex += 4;
+                
+                let bouncePt = new THREE.Vector3();
+                let srcPt = new THREE.Vector3();
+                
+                const z_s = state.z_src;
+                const b_y = (z_s - 1.5) * Math.tan(angleRad); 
+                
+                switch(faceIndex) {
+                    case 0: bouncePt.set(0, b_y, z_s); srcPt.set(0, 0, z_s); break;
+                    case 1: bouncePt.set(z_s, b_y, 0); srcPt.set(z_s, 0, 0); break;
+                    case 2: bouncePt.set(0, b_y, -z_s); srcPt.set(0, 0, -z_s); break;
+                    case 3: bouncePt.set(-z_s, b_y, 0); srcPt.set(-z_s, 0, 0); break;
+                }
+
+                actualRay.geometry.setFromPoints([srcPt, bouncePt, eyeGroup.position]);
+                
+                if(finalOpacity > 0.05) {
+                    virtualRay.visible = true;
+                    virtualRay.geometry.setFromPoints([eyeGroup.position, bouncePt, state.hologramCenter]);
+                    virtualRay.computeLineDistances(); 
+                } else {
+                    virtualRay.visible = false;
+                }
+
+                angleLabel.position.copy(bouncePt).add(new THREE.Vector3(0, 1, 0));
+                
+                if (finalOpacity > 0.3) {
+                    angleLabel.element.innerHTML = `입사각 ${state.filmAngle}°<br>반사각 ${state.filmAngle}°`;
+                    angleLabel.element.className = 'label';
+                } else {
+                    angleLabel.element.innerHTML = `각도 엇나감!`;
+                    angleLabel.element.className = 'label red';
+                }
+
+                realLightLabel.position.copy(srcPt).lerp(bouncePt, 0.5);
+                virtualLightLabel.position.copy(bouncePt).lerp(state.hologramCenter, 0.5);
+                
+                const showLabels = hDeviation < 40;
+                angleLabel.visible = showLabels;
+                realLightLabel.visible = showLabels;
+                virtualLightLabel.visible = showLabels && virtualRay.visible;
+            }
+        }
+
+        // --- Event Listeners ---
+
+        function updateUIValues() {
+            document.getElementById('val-vangle').innerText = `${state.vAngle}°`;
+            document.getElementById('val-hangle').innerText = `${state.hAngle}°`;
+            document.getElementById('val-roomlight').innerText = `${state.roomLight}%`;
+            document.getElementById('val-screenlight').innerText = `${state.screenLight}%`;
+            document.getElementById('val-filmangle').innerText = `${state.filmAngle}°`;
+        }
+
+        elSliderVAngle.addEventListener('input', (e) => { state.vAngle = parseInt(e.target.value); updateUIValues(); });
+        elSliderHAngle.addEventListener('input', (e) => { state.hAngle = parseInt(e.target.value); updateUIValues(); });
+        elSliderRoomLight.addEventListener('input', (e) => { state.roomLight = parseInt(e.target.value); updateUIValues(); });
+        elSliderScreenLight.addEventListener('input', (e) => { state.screenLight = parseInt(e.target.value); updateUIValues(); });
+        
+        elSliderFilmAngle.addEventListener('input', (e) => { 
+            state.filmAngle = parseInt(e.target.value); 
+            updateUIValues(); 
+            updatePyramidGeometry(); 
+        });
+
+        elSelectChar.addEventListener('change', (e) => {
+            state.character = e.target.value;
+            updateMinimap();
+        });
+
+        elToggleRays.addEventListener('change', (e) => {
+            state.showRays = e.target.checked;
+            rayGroup.visible = state.showRays;
+        });
+
+        // 🎯 Auto Fix Angle
+        elBtnFixAngle.addEventListener('click', () => {
+            let targetHAngle = Math.round(state.hAngle / 90) * 90;
+            let targetVAngle = Math.round(state.optimalAngle);
+            triggerAnimation({ vAngle: targetVAngle, hAngle: targetHAngle });
+        });
+
+        // ✨ Reset Everything
+        elBtnReset.addEventListener('click', () => {
+            triggerAnimation({ vAngle: 0, hAngle: 0, roomLight: 20, screenLight: 90, filmAngle: 45 }, true);
+        });
+
+        let isAnimating = false;
+        function triggerAnimation(targetState, moveCamera = false) {
+            if(isAnimating) return;
+            isAnimating = true;
+
+            const duration = 1500;
+            const startState = { ...state };
+            const startTime = performance.now();
+            const startCamPos = camera.position.clone();
+            const targetCamPos = new THREE.Vector3(0, 5, 25);
+
+            function animateTransition(time) {
+                const elapsed = time - startTime;
+                const t = Math.min(elapsed / duration, 1);
+                const ease = 1 - Math.pow(1 - t, 3);
+
+                if (targetState.vAngle !== undefined) state.vAngle = Math.round(startState.vAngle + (targetState.vAngle - startState.vAngle) * ease);
+                
+                if (targetState.hAngle !== undefined) {
+                    let hDiff = targetState.hAngle - startState.hAngle;
+                    if (hDiff > 180) hDiff -= 360;
+                    if (hDiff < -180) hDiff += 360;
+                    let currentH = startState.hAngle + hDiff * ease;
+                    if (currentH < 0) currentH += 360;
+                    state.hAngle = Math.round(currentH % 360);
+                }
+
+                if (targetState.roomLight !== undefined) state.roomLight = Math.round(startState.roomLight + (targetState.roomLight - startState.roomLight) * ease);
+                if (targetState.screenLight !== undefined) state.screenLight = Math.round(startState.screenLight + (targetState.screenLight - startState.screenLight) * ease);
+                
+                if (targetState.filmAngle !== undefined) {
+                    const oldFilmAngle = state.filmAngle;
+                    state.filmAngle = Math.round(startState.filmAngle + (targetState.filmAngle - startState.filmAngle) * ease);
+                    if(oldFilmAngle !== state.filmAngle) updatePyramidGeometry();
+                }
+
+                elSliderVAngle.value = state.vAngle;
+                elSliderHAngle.value = state.hAngle;
+                elSliderRoomLight.value = state.roomLight;
+                elSliderScreenLight.value = state.screenLight;
+                elSliderFilmAngle.value = state.filmAngle;
+                updateUIValues();
+
+                if(moveCamera) {
+                    camera.position.lerpVectors(startCamPos, targetCamPos, ease);
+                }
+
+                if(t < 1) requestAnimationFrame(animateTransition);
+                else isAnimating = false;
+            }
+            requestAnimationFrame(animateTransition);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            updatePhysics();
+            
+            // 1. 관찰자 시점(PIP) 렌더링 및 2D 캔버스 복사 로직
+            if (state.isLeftPanelOpen) {
+                const logicalSize = 256;
+                const pixelRatio = renderer.getPixelRatio();
+                const physSize = Math.floor(logicalSize * pixelRatio);
+                
+                renderer.setViewport(0, 0, logicalSize, logicalSize);
+                renderer.setScissorTest(true);
+                renderer.setScissor(0, 0, logicalSize, logicalSize);
+                
+                scene.background = new THREE.Color(0x111827); 
+                renderer.render(scene, observerCamera);
+                
+                pipCtx.drawImage(
+                    renderer.domElement,
+                    0, renderer.domElement.height - physSize, physSize, physSize,
+                    0, 0, pipCanvas.width, pipCanvas.height
+                );
+            }
+
+            // 2. 전체 메인 화면 정상 렌더링
+            renderer.setScissorTest(false);
+            renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+            scene.background = new THREE.Color(0x0f172a); 
+            renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
