@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>열평형 인터랙티브 시뮬레이션</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 커스텀 슬라이더 스타일 */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 2px solid #4B5563;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #D1D5DB;
+            border-radius: 3px;
+        }
+        input[type=range]:focus {
+            outline: none;
+        }
+        
+        .temp-hot::-webkit-slider-runnable-track { background: linear-gradient(to right, #fca5a5, #ef4444); }
+        .temp-cold::-webkit-slider-runnable-track { background: linear-gradient(to right, #93c5fd, #3b82f6); }
+        .mass-track::-webkit-slider-runnable-track { background: #9ca3af; }
+        
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans p-4 md:p-8 min-h-screen flex justify-center items-start">
+
+    <div class="max-w-5xl w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col">
+        
+        <!-- 헤더 영역 -->
+        <div class="bg-slate-800 text-white p-5 text-center">
+            <h1 class="text-2xl font-bold mb-2">🔥 열평형 시뮬레이션 ❄️</h1>
+            <p class="text-sm text-slate-300">온도가 다른 두 물체가 접촉했을 때 열이 이동하여 온도가 같아지는 현상을 관찰해보세요.</p>
+        </div>
+
+        <!-- 메인 컨트롤 영역 (질량, 초기 온도) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-slate-100 border-b border-slate-200">
+            <!-- 뜨거운 물 설정 -->
+            <div class="bg-red-50 p-4 rounded-xl border border-red-100 shadow-sm">
+                <h2 class="text-lg font-bold text-red-600 mb-4 flex items-center">
+                    <span class="text-2xl mr-2">☕</span> 뜨거운 물 설정
+                </h2>
+                <div class="mb-4">
+                    <label class="flex justify-between text-sm font-semibold mb-1 text-slate-700">
+                        <span>질량 (입자 수)</span>
+                        <span id="label-massH" class="text-red-600">50</span>
+                    </label>
+                    <input type="range" id="massH" min="10" max="100" value="50" class="mass-track">
+                </div>
+                <div>
+                    <label class="flex justify-between text-sm font-semibold mb-1 text-slate-700">
+                        <span>초기 온도</span>
+                        <span id="label-tempH" class="text-red-600">80 °C</span>
+                    </label>
+                    <input type="range" id="tempH" min="50" max="100" value="80" class="temp-hot">
+                </div>
+            </div>
+
+            <!-- 차가운 물 설정 -->
+            <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
+                <h2 class="text-lg font-bold text-blue-600 mb-4 flex items-center">
+                    <span class="text-2xl mr-2">🧊</span> 차가운 물 설정
+                </h2>
+                <div class="mb-4">
+                    <label class="flex justify-between text-sm font-semibold mb-1 text-slate-700">
+                        <span>질량 (입자 수)</span>
+                        <span id="label-massC" class="text-blue-600">50</span>
+                    </label>
+                    <input type="range" id="massC" min="10" max="100" value="50" class="mass-track">
+                </div>
+                <div>
+                    <label class="flex justify-between text-sm font-semibold mb-1 text-slate-700">
+                        <span>초기 온도</span>
+                        <span id="label-tempC" class="text-blue-600">20 °C</span>
+                    </label>
+                    <input type="range" id="tempC" min="0" max="50" value="20" class="temp-cold">
+                </div>
+            </div>
+        </div>
+
+        <!-- 시각화 영역 (입자 캔버스 + 온도계) -->
+        <div class="p-6 flex flex-col md:flex-row gap-4 justify-center items-center relative bg-white">
+            <!-- 왼쪽 온도계 -->
+            <div class="flex flex-col items-center w-16">
+                <span class="text-xs font-bold text-slate-500 mb-1">현재 온도</span>
+                <canvas id="thermoH" width="40" height="200" class="bg-slate-50 rounded-full border border-slate-200"></canvas>
+                <span id="currentTempH-text" class="mt-2 font-bold text-red-500 text-lg">80°</span>
+            </div>
+
+            <!-- 메인 입자 시뮬레이션 캔버스 -->
+            <div class="relative flex-1 w-full max-w-2xl bg-slate-900 rounded-lg overflow-hidden shadow-inner border-4 border-slate-700" style="aspect-ratio: 2/1;">
+                <canvas id="particleCanvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+                <!-- 분리벽 UI (CSS로 표현) -->
+                <div id="barrier" class="absolute top-0 bottom-0 left-1/2 w-2 bg-slate-400 transform -translate-x-1/2 z-10 transition-opacity duration-300"></div>
+            </div>
+
+            <!-- 오른쪽 온도계 -->
+            <div class="flex flex-col items-center w-16">
+                <span class="text-xs font-bold text-slate-500 mb-1">현재 온도</span>
+                <canvas id="thermoC" width="40" height="200" class="bg-slate-50 rounded-full border border-slate-200"></canvas>
+                <span id="currentTempC-text" class="mt-2 font-bold text-blue-500 text-lg">20°</span>
+            </div>
+        </div>
+
+        <!-- 시간 및 동작 컨트롤 -->
+        <div class="px-6 py-4 bg-slate-50 border-t border-b border-slate-200 flex flex-col md:flex-row items-center gap-6">
+            <button id="btn-action" class="w-full md:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg">
+                <span>🔄</span> 두 물체 접촉시키기
+            </button>
+            
+            <div class="flex-1 w-full flex flex-col">
+                <label class="flex justify-between text-sm font-semibold mb-2 text-slate-700">
+                    <span>시간 지남 (진행률)</span>
+                    <span id="label-time" class="text-indigo-600">0%</span>
+                </label>
+                <input type="range" id="timeSlider" min="0" max="100" value="0" step="0.1" class="mass-track w-full">
+            </div>
+        </div>
+
+        <!-- 그래프 영역 -->
+        <div class="p-6 bg-white">
+            <h3 class="text-sm font-bold text-slate-500 mb-2 text-center">시간에 따른 온도 변화 그래프</h3>
+            <div class="w-full h-48 relative border-l-2 border-b-2 border-slate-400 pl-1 pb-1">
+                <canvas id="graphCanvas" class="w-full h-full"></canvas>
+                
+                <!-- 축 라벨 -->
+                <span class="absolute -left-6 top-0 text-xs text-slate-400 font-bold">온도</span>
+                <span class="absolute right-0 -bottom-5 text-xs text-slate-400 font-bold">시간</span>
+                <span class="absolute -left-6 bottom-0 text-xs text-slate-400">0</span>
+                <span class="absolute -left-8 top-0 text-xs text-slate-400">100</span>
+            </div>
+            
+            <div class="flex justify-center gap-6 mt-4 text-sm font-bold">
+                <div class="flex items-center gap-2"><span class="w-4 h-1 bg-red-500 rounded"></span> 뜨거운 물</div>
+                <div class="flex items-center gap-2"><span class="w-4 h-1 bg-blue-500 rounded"></span> 차가운 물</div>
+                <div class="flex items-center gap-2"><span class="w-4 h-1 bg-purple-400 border border-purple-500 border-dashed rounded"></span> 열평형 도달 온도 (예상)</div>
+            </div>
+        </div>
+
+        <!-- 퀴즈 영역 (새로 추가됨) -->
+        <div class="p-6 bg-slate-100 border-t border-slate-200 text-center">
+            <h3 class="text-lg font-bold text-slate-700 mb-2">💡 시뮬레이션을 통해 열평형을 이해했나요?</h3>
+            <p class="text-sm text-slate-500 mb-4">10개의 퀴즈를 풀고 나의 실력을 확인해보세요!</p>
+            <button id="btn-start-quiz" class="px-8 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-full shadow-lg transition-transform transform hover:scale-105">
+                📝 퀴즈 풀기 시작!
+            </button>
+        </div>
+
+        <!-- 푸터 (제작자 및 저작권) -->
+        <div class="bg-slate-800 text-slate-400 text-center py-5 text-sm rounded-b-2xl mt-auto">
+            <p class="font-bold text-slate-200 mb-1 text-base">제작 - 해누리중학교 1학년 김예현</p>
+            <p>&copy; 2026 해누리중학교 김예현. All rights reserved.</p>
+        </div>
+
+    </div>
+
+    <!-- 퀴즈 모달 (숨김 상태로 시작) -->
+    <div id="quiz-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto flex flex-col">
+            <div class="p-6 border-b border-emerald-600 bg-emerald-500 text-white rounded-t-2xl flex justify-between items-center">
+                <h2 class="text-xl font-bold">📝 열평형 퀴즈</h2>
+                <button id="btn-close-quiz" class="text-white hover:text-emerald-200 font-bold text-3xl leading-none">&times;</button>
+            </div>
+            <div id="quiz-content" class="p-6 min-h-[250px] flex flex-col justify-center">
+                <!-- 퀴즈 내용이 동적으로 들어갈 곳 -->
+            </div>
+            <div class="p-6 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex justify-between items-center">
+                <span id="quiz-progress" class="text-sm font-bold text-slate-500">1 / 10</span>
+                <button id="btn-next-quiz" class="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg shadow disabled:opacity-50 disabled:cursor-not-allowed transition-colors">다음 질문</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 시뮬레이션 상태 변수 ---
+        const state = {
+            massH: 50,
+            tempH: 80,
+            massC: 50,
+            tempC: 20,
+            time: 0,           // 0 ~ 100
+            isPlaying: false,
+            isContacted: false,
+            teq: 50,           // 평형 온도
+            currentTempH: 80,
+            currentTempC: 20
+        };
+
+        const K_DECAY = 0.04; // 온도 변화 속도 상수
+
+        // --- DOM 요소 ---
+        const els = {
+            massH: document.getElementById('massH'),
+            tempH: document.getElementById('tempH'),
+            massC: document.getElementById('massC'),
+            tempC: document.getElementById('tempC'),
+            lblMassH: document.getElementById('label-massH'),
+            lblTempH: document.getElementById('label-tempH'),
+            lblMassC: document.getElementById('label-massC'),
+            lblTempC: document.getElementById('label-tempC'),
+            timeSlider: document.getElementById('timeSlider'),
+            lblTime: document.getElementById('label-time'),
+            btnAction: document.getElementById('btn-action'),
+            barrier: document.getElementById('barrier'),
+            txtTempH: document.getElementById('currentTempH-text'),
+            txtTempC: document.getElementById('currentTempC-text'),
+            canvasP: document.getElementById('particleCanvas'),
+            canvasG: document.getElementById('graphCanvas'),
+            thermoH: document.getElementById('thermoH'),
+            thermoC: document.getElementById('thermoC')
+        };
+
+        const ctxP = els.canvasP.getContext('2d');
+        const ctxG = els.canvasG.getContext('2d');
+        const ctxTH = els.thermoH.getContext('2d');
+        const ctxTC = els.thermoC.getContext('2d');
+
+        // 입자 배열
+        let particles = [];
+
+        // --- 유틸리티 함수 ---
+        // 온도에 따른 색상 계산 (0=파랑, 50=보라, 100=빨강)
+        function getTempColor(temp) {
+            let t = Math.max(0, Math.min(100, temp));
+            const r = Math.round((t / 100) * 255);
+            const b = Math.round(((100 - t) / 100) * 255);
+            return `rgb(${r}, 50, ${b})`;
+        }
+
+        // 캔버스 사이즈 맞추기 (선명도 유지)
+        function resizeCanvases() {
+            // 입자 캔버스 고정 해상도 사용 (물리 연산 일관성을 위해)
+            els.canvasP.width = 800;
+            els.canvasP.height = 400;
+            
+            // 그래프 캔버스는 부모 요소 크기에 맞춤
+            const rectG = els.canvasG.parentElement.getBoundingClientRect();
+            els.canvasG.width = rectG.width;
+            els.canvasG.height = rectG.height;
+        }
+
+        // --- 물리 및 상태 계산 ---
+        function calculateTemperatures() {
+            // 평형 온도 (질량 가중 평균)
+            state.teq = (state.massH * state.tempH + state.massC * state.tempC) / (state.massH + state.massC);
+            
+            // 시간에 따른 현재 온도 (지수 함수 형태)
+            state.currentTempH = state.teq + (state.tempH - state.teq) * Math.exp(-K_DECAY * state.time);
+            state.currentTempC = state.teq + (state.tempC - state.teq) * Math.exp(-K_DECAY * state.time);
+
+            // 텍스트 업데이트
+            els.txtTempH.innerText = Math.round(state.currentTempH) + '°';
+            els.txtTempC.innerText = Math.round(state.currentTempC) + '°';
+        }
+
+        // --- 입자 시스템 ---
+        class Particle {
+            constructor(type, canvasWidth, canvasHeight) {
+                this.type = type; // 'hot' or 'cold'
+                this.radius = 4 + Math.random() * 2;
+                
+                // 초기 위치 (분리됨)
+                if (type === 'hot') {
+                    this.x = this.radius + Math.random() * (canvasWidth / 2 - this.radius * 2);
+                } else {
+                    this.x = canvasWidth / 2 + this.radius + Math.random() * (canvasWidth / 2 - this.radius * 2);
+                }
+                this.y = this.radius + Math.random() * (canvasHeight - this.radius * 2);
+                
+                // 기본 속도 방향 무작위 설정
+                const angle = Math.random() * Math.PI * 2;
+                this.baseVx = Math.cos(angle);
+                this.baseVy = Math.sin(angle);
+            }
+
+            update(canvasWidth, canvasHeight) {
+                // 현재 온도에 따라 속도 조절 (온도의 제곱근에 비례하는 느낌으로)
+                let temp = this.type === 'hot' ? state.currentTempH : state.currentTempC;
+                let speedMult = 0.5 + (temp / 100) * 3.5; 
+
+                let vx = this.baseVx * speedMult;
+                let vy = this.baseVy * speedMult;
+
+                this.x += vx;
+                this.y += vy;
+
+                // 벽 충돌 (상하좌우)
+                if (this.x - this.radius < 0) { this.x = this.radius; this.baseVx *= -1; }
+                if (this.x + this.radius > canvasWidth) { this.x = canvasWidth - this.radius; this.baseVx *= -1; }
+                if (this.y - this.radius < 0) { this.y = this.radius; this.baseVy *= -1; }
+                if (this.y + this.radius > canvasHeight) { this.y = canvasHeight - this.radius; this.baseVy *= -1; }
+
+                // 칸막이 충돌 (접촉 전)
+                if (!state.isContacted) {
+                    if (this.type === 'hot' && this.x + this.radius > canvasWidth / 2) {
+                        this.x = canvasWidth / 2 - this.radius;
+                        this.baseVx *= -1;
+                    }
+                    if (this.type === 'cold' && this.x - this.radius < canvasWidth / 2) {
+                        this.x = canvasWidth / 2 + this.radius;
+                        this.baseVx *= -1;
+                    }
+                }
+            }
+
+            draw(ctx) {
+                let temp = this.type === 'hot' ? state.currentTempH : state.currentTempC;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = getTempColor(temp);
+                ctx.fill();
+                // 빛나는 효과
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = ctx.fillStyle;
+            }
+        }
+
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < state.massH; i++) {
+                particles.push(new Particle('hot', els.canvasP.width, els.canvasP.height));
+            }
+            for (let i = 0; i < state.massC; i++) {
+                particles.push(new Particle('cold', els.canvasP.width, els.canvasP.height));
+            }
+        }
+
+        // --- 렌더링 함수들 ---
+        function drawThermometer(ctx, temp, type) {
+            ctx.clearRect(0, 0, 40, 200);
+            
+            // 온도계 배경 및 테두리
+            ctx.fillStyle = '#f1f5f9'; // bg-slate-50
+            ctx.beginPath();
+            ctx.roundRect(10, 10, 20, 160, 10);
+            ctx.fill();
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 온도계 구근 (하단 동그라미)
+            ctx.beginPath();
+            ctx.arc(20, 175, 12, 0, Math.PI * 2);
+            ctx.fillStyle = getTempColor(temp);
+            ctx.fill();
+
+            // 온도 레벨
+            const maxH = 140;
+            const fillH = (temp / 100) * maxH;
+            ctx.fillStyle = getTempColor(temp);
+            ctx.beginPath();
+            ctx.roundRect(14, 160 - fillH, 12, fillH + 10, 6);
+            ctx.fill();
+            
+            // 눈금 그리기
+            ctx.fillStyle = '#94a3b8';
+            for(let i=0; i<=5; i++) {
+                let y = 20 + (140/5) * i;
+                ctx.fillRect(30, y, 5, 2);
+            }
+        }
+
+        function drawGraph() {
+            const w = els.canvasG.width;
+            const h = els.canvasG.height;
+            ctxG.clearRect(0, 0, w, h);
+
+            // 가이드라인 (Teq) - 점선
+            const yTeq = h - (state.teq / 100) * h;
+            ctxG.beginPath();
+            ctxG.setLineDash([5, 5]);
+            ctxG.moveTo(0, yTeq);
+            ctxG.lineTo(w, yTeq);
+            ctxG.strokeStyle = '#a855f7'; // purple-500
+            ctxG.lineWidth = 2;
+            ctxG.stroke();
+            ctxG.setLineDash([]);
+
+            // 현재 시간까지의 그래프 선 그리기
+            ctxG.lineWidth = 3;
+            
+            // 뜨거운 물 (빨간 선)
+            ctxG.beginPath();
+            for (let t = 0; t <= state.time; t += 1) {
+                let temp = state.teq + (state.tempH - state.teq) * Math.exp(-K_DECAY * t);
+                let x = (t / 100) * w;
+                let y = h - (temp / 100) * h;
+                if (t === 0) ctxG.moveTo(x, y);
+                else ctxG.lineTo(x, y);
+            }
+            ctxG.strokeStyle = '#ef4444'; // red-500
+            ctxG.stroke();
+
+            // 차가운 물 (파란 선)
+            ctxG.beginPath();
+            for (let t = 0; t <= state.time; t += 1) {
+                let temp = state.teq + (state.tempC - state.teq) * Math.exp(-K_DECAY * t);
+                let x = (t / 100) * w;
+                let y = h - (temp / 100) * h;
+                if (t === 0) ctxG.moveTo(x, y);
+                else ctxG.lineTo(x, y);
+            }
+            ctxG.strokeStyle = '#3b82f6'; // blue-500
+            ctxG.stroke();
+
+            // 현재 시간 표시선
+            let curX = (state.time / 100) * w;
+            ctxG.beginPath();
+            ctxG.moveTo(curX, 0);
+            ctxG.lineTo(curX, h);
+            ctxG.strokeStyle = 'rgba(100,116,139,0.3)';
+            ctxG.lineWidth = 1;
+            ctxG.stroke();
+        }
+
+        function drawParticles() {
+            ctxP.clearRect(0, 0, els.canvasP.width, els.canvasP.height);
+            // 그림자 효과 리셋
+            ctxP.shadowBlur = 0;
+            
+            particles.forEach(p => {
+                p.update(els.canvasP.width, els.canvasP.height);
+                p.draw(ctxP);
+            });
+            ctxP.shadowBlur = 0; // 복구
+        }
+
+        // --- 메인 루프 ---
+        function loop() {
+            if (state.isPlaying && state.isContacted) {
+                state.time += 0.2; // 시간 흐름 속도
+                if (state.time > 100) {
+                    state.time = 100;
+                    state.isPlaying = false;
+                    els.btnAction.innerHTML = "<span>🔄</span> 다시하기";
+                }
+                els.timeSlider.value = state.time;
+                els.lblTime.innerText = Math.round(state.time) + '%';
+            }
+
+            calculateTemperatures();
+            
+            drawThermometer(ctxTH, state.currentTempH, 'hot');
+            drawThermometer(ctxTC, state.currentTempC, 'cold');
+            drawParticles();
+            drawGraph();
+
+            requestAnimationFrame(loop);
+        }
+
+        // --- 이벤트 핸들러 ---
+        function resetSimulation() {
+            state.time = 0;
+            state.isPlaying = false;
+            state.isContacted = false;
+            els.timeSlider.value = 0;
+            els.lblTime.innerText = '0%';
+            els.barrier.style.opacity = '1';
+            els.btnAction.innerHTML = "<span>🔄</span> 두 물체 접촉시키기";
+            els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+            initParticles();
+        }
+
+        // 슬라이더 입력 시 상태 업데이트 함수
+        function updateStateFromInputs() {
+            state.massH = parseInt(els.massH.value);
+            state.tempH = parseInt(els.tempH.value);
+            state.massC = parseInt(els.massC.value);
+            state.tempC = parseInt(els.tempC.value);
+            
+            els.lblMassH.innerText = state.massH;
+            els.lblTempH.innerText = state.tempH + ' °C';
+            els.lblMassC.innerText = state.massC;
+            els.lblTempC.innerText = state.tempC + ' °C';
+            
+            // 입력값이 바뀌면 시뮬레이션 초기화
+            resetSimulation();
+        }
+
+        els.massH.addEventListener('input', updateStateFromInputs);
+        els.tempH.addEventListener('input', updateStateFromInputs);
+        els.massC.addEventListener('input', updateStateFromInputs);
+        els.tempC.addEventListener('input', updateStateFromInputs);
+
+        els.btnAction.addEventListener('click', () => {
+            if (!state.isContacted) {
+                // 접촉 시작
+                state.isContacted = true;
+                state.isPlaying = true;
+                els.barrier.style.opacity = '0'; // 칸막이 서서히 사라짐
+                els.btnAction.innerHTML = "<span>⏸️</span> 일시정지";
+                els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+            } else {
+                if (state.time >= 100) {
+                    // 완료 상태에서 다시하기
+                    resetSimulation();
+                } else {
+                    // 일시정지 / 재생 토글
+                    state.isPlaying = !state.isPlaying;
+                    if (state.isPlaying) {
+                        els.btnAction.innerHTML = "<span>⏸️</span> 일시정지";
+                        els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+                    } else {
+                        els.btnAction.innerHTML = "<span>▶️</span> 재생";
+                        els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+                    }
+                }
+            }
+        });
+
+        els.timeSlider.addEventListener('input', (e) => {
+            if (!state.isContacted) {
+                // 아직 접촉 안했는데 시간 슬라이더 건드리면 강제 접촉
+                state.isContacted = true;
+                els.barrier.style.opacity = '0';
+                els.btnAction.innerHTML = "<span>▶️</span> 재생";
+                els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+            }
+            state.isPlaying = false; // 수동 조작 시 자동 재생 멈춤
+            state.time = parseFloat(e.target.value);
+            els.lblTime.innerText = Math.round(state.time) + '%';
+            
+            if (state.time < 100) {
+                 els.btnAction.innerHTML = "<span>▶️</span> 재생";
+                 els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+            } else {
+                 els.btnAction.innerHTML = "<span>🔄</span> 다시하기";
+                 els.btnAction.className = "w-full md:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-lg";
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            // 창 크기가 바뀔 때 그래프 캔버스 크기 재조정
+            const rectG = els.canvasG.parentElement.getBoundingClientRect();
+            els.canvasG.width = rectG.width;
+            els.canvasG.height = rectG.height;
+            drawGraph();
+        });
+
+        // --- 초기화 ---
+        resizeCanvases();
+        updateStateFromInputs();
+        requestAnimationFrame(loop);
+
+        // --- 퀴즈 시스템 추가 ---
+        const quizData = [
+            { q: "온도가 다른 두 물체가 접촉했을 때, 열은 어느 방향으로 이동할까요?", options: ["고온에서 저온으로", "저온에서 고온으로", "이동하지 않는다", "질량이 큰 쪽에서 작은 쪽으로"], a: 0, exp: "열은 항상 온도가 높은 곳(고온)에서 온도가 낮은 곳(저온)으로 자연스럽게 이동한답니다." },
+            { q: "열의 이동이 멈추고 두 물체의 온도가 같아진 상태를 무엇이라고 하나요?", options: ["열팽창", "열전도", "열평형", "열복사"], a: 2, exp: "열이 이동하다가 두 물체의 온도가 같아져서 더 이상 열의 이동이 없는 상태를 '열평형'이라고 해요." },
+            { q: "온도가 높은 물체의 입자 운동은 어떠한가요?", options: ["매우 둔하다", "매우 활발하다", "운동하지 않는다", "일정하다"], a: 1, exp: "온도가 높을수록 입자들이 에너지를 많이 가져서 매우 활발하게 움직여요. 시뮬레이션에서 뜨거운 빨간 입자들이 아주 빠르게 움직이는 걸 관찰해보세요!" },
+            { q: "뜨거운 물과 차가운 물이 만나 열평형에 도달할 때, 뜨거운 물의 입자 속도는 어떻게 되나요?", options: ["점점 빨라진다", "점점 느려진다", "변함없다", "멈춘다"], a: 1, exp: "뜨거운 물은 차가운 물에게 열을 빼앗기기 때문에 온도가 낮아지고, 그 결과 입자들의 움직임도 처음보다 점점 느려집니다." },
+            { q: "외부와 열의 출입이 없을 때, 뜨거운 물이 잃은 열량과 차가운 물이 얻은 열량의 관계는?", options: ["잃은 열량이 더 크다", "얻은 열량이 더 크다", "항상 같다", "알 수 없다"], a: 2, exp: "열에너지는 갑자기 사라지거나 새로 생겨나지 않아요. 뜨거운 물이 잃어버린 열량만큼 차가운 물이 그대로 얻게 된답니다. (에너지 보존 법칙)" },
+            { q: "뜨거운 물(100도) 50g과 차가운 물(20도) 50g을 섞으면 열평형 온도는 약 몇 도가 될까요?", options: ["40도", "60도", "80도", "120도"], a: 1, exp: "두 물의 질량(양)이 같을 때는, 두 온도의 딱 중간 지점인 (100 + 20) / 2 = 60도에서 열평형이 이루어집니다." },
+            { q: "질량이 아주 큰 차가운 물에 뜨거운 물을 조금 넣으면, 열평형 온도는 어느 쪽에 가까워질까요?", options: ["뜨거운 물 온도", "차가운 물 온도", "정확히 중간 온도", "변화가 없다"], a: 1, exp: "질량(양)이 많은 쪽의 온도가 덜 변하는 성질이 있어요. 차가운 물이 훨씬 많기 때문에, 다 섞인 후의 온도도 차가운 물의 원래 온도에 가깝게 형성됩니다." },
+            { q: "시간이 지나 열평형 상태에 도달하면 꺾은선 그래프의 두 선(빨간선, 파란선)은 어떻게 되나요?", options: ["점점 멀어진다", "교차해서 반대로 간다", "하나의 선으로 만난다", "위아래로 요동친다"], a: 2, exp: "그래프에서 빨간선(뜨거운 물)은 온도가 내려오고, 파란선(차가운 물)은 온도가 올라가다가, 두 온도가 같아지는 지점에서 결국 하나의 선으로 만나게 됩니다." },
+            { q: "시뮬레이션에서 온도가 높아질 때 입자의 색깔은 주로 어떤 색에 가까워지나요?", options: ["파란색", "초록색", "보라색", "빨간색"], a: 3, exp: "시각적으로 온도를 쉽게 구분하기 위해 온도가 높은 뜨거운 입자는 붉은색(빨강) 계열로, 차가운 입자는 푸른색(파랑) 계열로 표현했어요." },
+            { q: "열평형 상태에 도달했을 때 두 물체의 입자들의 평균 운동(속도)은 어떻게 될까요?", options: ["고온이었던 입자가 여전히 더 빠르다", "저온이었던 입자가 더 빨라진다", "두 물체의 입자 평균 속도가 비슷해진다", "모든 입자가 완전히 멈춘다"], a: 2, exp: "온도가 같아졌다는 것은 두 물체를 이루는 입자들의 평균적인 운동 속도(에너지)가 서로 비슷하게 같아졌다는 뜻이랍니다." }
+        ];
+
+        let currentQuizIndex = 0;
+        let score = 0;
+        let selectedAnswer = -1;
+        let userAnswers = []; // 사용자가 선택한 답안을 저장하는 배열
+
+        const elsQuiz = {
+            modal: document.getElementById('quiz-modal'),
+            btnStart: document.getElementById('btn-start-quiz'),
+            btnClose: document.getElementById('btn-close-quiz'),
+            content: document.getElementById('quiz-content'),
+            progress: document.getElementById('quiz-progress'),
+            btnNext: document.getElementById('btn-next-quiz')
+        };
+
+        function renderQuiz() {
+            if (currentQuizIndex >= quizData.length) {
+                showQuizResult();
+                return;
+            }
+            
+            // 문제 풀이 중에는 다시 가운데 정렬
+            elsQuiz.content.classList.remove('justify-start');
+            elsQuiz.content.classList.add('justify-center');
+
+            const q = quizData[currentQuizIndex];
+            selectedAnswer = -1;
+            elsQuiz.btnNext.disabled = true;
+            
+            let html = `<h3 class="text-lg font-bold text-slate-800 mb-5 break-keep">${currentQuizIndex + 1}. ${q.q}</h3><div class="flex flex-col gap-3">`;
+            
+            q.options.forEach((opt, idx) => {
+                html += `
+                    <button class="quiz-option w-full p-4 border-2 border-slate-200 rounded-xl text-left hover:bg-emerald-50 hover:border-emerald-200 transition-all focus:outline-none" data-idx="${idx}">
+                        <span class="font-bold text-slate-500 mr-2">${idx + 1})</span> ${opt}
+                    </button>
+                `;
+            });
+            html += `</div>`;
+            
+            elsQuiz.content.innerHTML = html;
+            elsQuiz.progress.innerText = `${currentQuizIndex + 1} / ${quizData.length}`;
+            
+            // 옵션 클릭 이벤트 처리
+            const options = elsQuiz.content.querySelectorAll('.quiz-option');
+            options.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    options.forEach(b => {
+                        b.classList.remove('bg-emerald-100', 'border-emerald-500', 'shadow-md');
+                        b.classList.add('border-slate-200');
+                    });
+                    const target = e.currentTarget;
+                    target.classList.remove('border-slate-200');
+                    target.classList.add('bg-emerald-100', 'border-emerald-500', 'shadow-md');
+                    selectedAnswer = parseInt(target.getAttribute('data-idx'));
+                    elsQuiz.btnNext.disabled = false;
+                });
+            });
+        }
+
+        function showQuizResult() {
+            // 오답 노트로 내용이 길어질 때 화면 상단이 잘리지 않도록 위쪽 정렬로 변경
+            elsQuiz.content.classList.remove('justify-center');
+            elsQuiz.content.classList.add('justify-start');
+
+            let feedback = "";
+            let emoji = "";
+            if (score === 10) {
+                feedback = "와! 완벽해요! 열평형 마스터가 되었네요!";
+                emoji = "🏆✨";
+            } else if (score >= 7) {
+                feedback = "참 잘했어요! 열평형에 대해 아주 잘 이해하고 있군요!";
+                emoji = "🌟👍";
+            } else if (score >= 4) {
+                feedback = "좋아요! 아래 설명을 읽어보고 시뮬레이션을 조금만 더 관찰하면 완벽해질 거예요!";
+                emoji = "💪😊";
+            } else {
+                feedback = "괜찮아요! 아래 틀린 문제의 설명을 천천히 읽어보고 다시 도전해볼까요?";
+                emoji = "🌱📚";
+            }
+
+            let resultHTML = `
+                <div class="text-center py-4 animate-fade-in">
+                    <div class="text-7xl mb-4">${emoji}</div>
+                    <h3 class="text-3xl font-bold text-slate-800 mb-3">${score}점 / 10점</h3>
+                    <p class="text-lg text-slate-600 font-medium break-keep">${feedback}</p>
+                </div>
+            `;
+
+            // 오답 노트 렌더링 (10점이 아닐 때만)
+            if (score < 10) {
+                resultHTML += `<div class="mt-4 text-left border-t border-slate-200 pt-6">`;
+                resultHTML += `<h4 class="text-xl font-bold text-red-500 mb-4 flex items-center gap-2"><span>🔍</span> 틀린 문제 다시 보기</h4>`;
+                resultHTML += `<div class="flex flex-col gap-4">`;
+
+                quizData.forEach((q, idx) => {
+                    const userAnswer = userAnswers[idx];
+                    if (userAnswer !== q.a) {
+                        resultHTML += `
+                            <div class="bg-red-50 p-5 rounded-xl border border-red-200">
+                                <p class="font-bold text-slate-800 mb-3 text-lg">Q${idx + 1}. ${q.q}</p>
+                                <p class="text-sm text-red-600 mb-1 line-through">❌ 내가 고른 답: ${userAnswer !== -1 ? q.options[userAnswer] : "선택 안 함"}</p>
+                                <p class="text-base text-emerald-600 font-bold mb-3">✅ 정답: ${q.options[q.a]}</p>
+                                <div class="bg-white p-4 rounded-lg border border-red-100 text-sm text-slate-700 mt-2 shadow-sm">
+                                    <span class="font-bold text-indigo-500 block mb-1">👨‍🏫 선생님의 설명:</span> 
+                                    ${q.exp}
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
+
+                resultHTML += `</div></div>`;
+                
+                // 다시 풀기 버튼
+                resultHTML += `
+                    <div class="mt-8 text-center border-t border-slate-200 pt-6">
+                        <button id="btn-retry-quiz" class="w-full md:w-auto px-8 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-full shadow-lg transition-transform transform hover:scale-105">
+                            💪 이해했나요? 퀴즈 다시 도전해보기!
+                        </button>
+                    </div>
+                `;
+            }
+
+            elsQuiz.content.innerHTML = resultHTML;
+
+            // 다시 풀기 버튼 이벤트 연결
+            if (score < 10) {
+                document.getElementById('btn-retry-quiz').addEventListener('click', openQuiz);
+            }
+
+            elsQuiz.progress.innerText = "결과 발표";
+            elsQuiz.btnNext.innerText = "퀴즈 닫기";
+            elsQuiz.btnNext.disabled = false;
+            elsQuiz.btnNext.onclick = closeQuiz;
+        }
+
+        function openQuiz() {
+            currentQuizIndex = 0;
+            score = 0;
+            userAnswers = []; // 새 게임 시 답안 초기화
+            elsQuiz.btnNext.innerText = "다음 질문";
+            elsQuiz.btnNext.onclick = handleNextQuiz;
+            elsQuiz.modal.classList.remove('hidden');
+            renderQuiz();
+        }
+
+        function closeQuiz() {
+            elsQuiz.modal.classList.add('hidden');
+        }
+
+        function handleNextQuiz() {
+            if (currentQuizIndex < quizData.length) {
+                userAnswers.push(selectedAnswer); // 현재 선택한 답을 기록
+                if (selectedAnswer === quizData[currentQuizIndex].a) {
+                    score++;
+                }
+                currentQuizIndex++;
+                renderQuiz();
+            }
+        }
+
+        // 이벤트 리스너 등록
+        elsQuiz.btnStart.addEventListener('click', openQuiz);
+        elsQuiz.btnClose.addEventListener('click', closeQuiz);
+
+    </script>
+</body>
+</html>
